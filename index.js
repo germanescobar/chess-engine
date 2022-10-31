@@ -15,8 +15,6 @@ const model = tf.sequential({
   loss: "meanSquaredError",
 })
 
-
-
 let trained = false
 run().then(() => console.log("finished!"))
   
@@ -41,6 +39,8 @@ async function run() {
     await train(data, results)
     trained = true
   }
+
+  await model.save("file://model")
 }
 
 function playGames(numGames) {
@@ -48,10 +48,9 @@ function playGames(numGames) {
   for (let i=0; i < numGames; i++) {
     const chess = new Chess()
     const moves = []
-    while (!chess.isGameOver()) {
+    while (!chess.isGameOver() && moves.length < 180) {
       const position = getBoard(chess)
       const m = getMove(chess)
-      console.log(m)
       const move = chess.move(m)
       moves.push({ position, move })
     }
@@ -91,24 +90,52 @@ function getMove(chess) {
     const output = model.predict(tf.tensor([input]))
     const result = output.dataSync()
     
-    let bestMove = null
-    for (let i=1; i < validMoves.length; i++) {
+    let sum = 0
+    for (let i=0; i < validMoves.length; i++) {
       const move = validMoves[i]
       const encodedFrom = encodeCell(move.from)
       const encodedTo = encodeCell(move.to)
 
       move.value = result[encodedFrom * 64 + encodedTo]
-      if (!bestMove || move.value > bestMove.value) {
-        bestMove = move
+
+      if (!move.value) {
+        console.log("No value for move:", move)
+      } else {
+        sum += move.value
       }
     }
+
+    const weights = []
+    for (let i=0; i < validMoves.length; i++) {
+      const move = validMoves[i]
+      weights.push(move.value / sum)
+    }
+    // console.log("Weights:", weights)
+    const selectedMove = weightedRandom(validMoves, weights)
     
-    if (!bestMove) console.log(validMoves)
-    return bestMove
+    if (!selectedMove) {
+      console.log("No selected move")
+      return validMoves[0]
+    }
+    // console.log(selectedMove)
+    return selectedMove
   } else {
     const moves = chess.moves()
     return moves[Math.floor(Math.random() * moves.length)]
   }
+}
+
+function weightedRandom(items, weights) {
+  let i;
+  for (i = 0; i < weights.length; i++) {
+    weights[i] += weights[i - 1] || 0;
+  }
+  const random = Math.random();
+  for (i = 0; i < weights.length; i++) {
+    if (weights[i] > random) break;
+  }
+      
+  return items[i];
 }
 
 function getBoard(chess) {
