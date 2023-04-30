@@ -1,26 +1,14 @@
+import * as fs from 'fs'
 import { Chess } from 'chess.js'
 import * as tf from '@tensorflow/tfjs-node-gpu'
-
-const ALPHA = 0.001
-
-const model = tf.sequential({
-  layers: [
-    tf.layers.dense({inputShape: [770], units: 2048, activation: 'relu'}),
-    tf.layers.dense({units: 4097, activation: 'softmax'}),
-  ]
- });
-
- model.compile({
-  optimizer: tf.train.sgd(ALPHA),
-  loss: "meanSquaredError",
-})
 
 let trained = false
 run().then(() => console.log("finished!"))
   
 async function run() {
-  for (let i=0; i < 2; i++) {
-    const games = playGames(50)
+  const model = await loadModel()
+  for (let i=0; i < 40; i++) {
+    const games = playGames(model, 50)
     const data = []
     const results = []
     for (let i=0; i < games.length; i++) {
@@ -36,23 +24,55 @@ async function run() {
     console.log("Data length: ", data[0].length)
     console.log("Result length:", results[0].length)
   
-    await train(data, results)
+    await train(model, data, results)
     trained = true
+    if (i % 20 === 0) await model.save("file://model")
   }
 
   await model.save("file://model")
 }
 
-function playGames(numGames) {
+async function loadModel() {
+  const ALPHA = 0.001
+
+  let model
+  if (fs.existsSync('model/model.json')) {
+    console.log("Loading from existing model ...")
+    model = await tf.loadLayersModel('file://model/model.json')
+    trained = true
+  } else {
+    model = tf.sequential({
+      layers: [
+        tf.layers.dense({inputShape: [770], units: 2048, activation: 'relu'}),
+        tf.layers.dense({units: 4097, activation: 'softmax'}),
+      ]
+    });
+  }
+
+  model.compile({
+    optimizer: tf.train.sgd(ALPHA),
+    loss: "meanSquaredError",
+  })
+
+  return model
+}
+
+function playGames(model, numGames) {
   const games = []
   for (let i=0; i < numGames; i++) {
     const chess = new Chess()
     const moves = []
-    while (!chess.isGameOver() && moves.length < 180) {
+    let movesWithoutCaptures = 0
+    while (!chess.isGameOver() && movesWithoutCaptures < 50) {
       const position = getBoard(chess)
-      const m = getMove(chess)
+      const m = getMove(model, chess)
       const move = chess.move(m)
       moves.push({ position, move })
+      if (move.flags.indexOf("c") === -1) {
+        movesWithoutCaptures++
+      } else {
+        movesWithoutCaptures = 0
+      }
     }
     
     console.log("Moves: ", moves.length)
@@ -74,7 +94,7 @@ function playGames(numGames) {
   return games
 }
 
-async function train(data, results) {
+async function train(model, data, results) {
   await model.fit(tf.tensor(data), tf.tensor(results))
 
   console.log(model.layers[0].getWeights()[0].shape)
@@ -83,7 +103,7 @@ async function train(data, results) {
   model.layers[1].getWeights()[0].print()
 }
 
-function getMove(chess) {
+function getMove(model, chess) {
   if (trained) {
     const validMoves = chess.moves({ verbose: true })
     const input = encodeBoard(getBoard(chess), validMoves[0].color)
@@ -120,7 +140,7 @@ function getMove(chess) {
     // console.log(selectedMove)
     return selectedMove
   } else {
-    const moves = chess.moves()
+    const moves = chess.moves({ verbose: true })
     return moves[Math.floor(Math.random() * moves.length)]
   }
 }
